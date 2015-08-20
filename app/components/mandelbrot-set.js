@@ -6,6 +6,7 @@ export default Ember.Component.extend({
   increment: null,
   maxIterations: null,
   escapePoint: null,
+  startCalculation: false,
 
   setCanvas: Ember.on('didInsertElement', function() {
     Ember.run.scheduleOnce('afterRender', this, function() {
@@ -14,8 +15,8 @@ export default Ember.Component.extend({
 	-0.5,
 	0.0,
 	0.0046875,
-	1000,
-	2.0
+	180,
+	30.1
       );
     });
   }),
@@ -23,6 +24,7 @@ export default Ember.Component.extend({
   actions: {
     calculate: function(centerX, centerY, increment, maxIterations, escapePoint) {
       this.setProperties({centerX, centerY, increment, maxIterations, escapePoint});
+      this.set('startCalculation', true);
     }
   }
 });

@@ -69,9 +69,12 @@ define('mandelbrot/components/mandelbrot-canvas', ['exports', 'ember', 'mandelbr
     increment: null,
     maxIterations: null,
     escapePoint: null,
+    lastCalculation: [],
+    startCalculation: false,
 
-    theCalculator: Ember['default'].observer('centerX', 'centerY', 'increment', 'maxIterations', 'escapePoint', function () {
-      if (this.get('centerX') !== '' && this.get('centerY') !== '' && this.get('increment') !== '' && this.get('maxIterations') !== '' && this.get('escapePoint') !== '') {
+    theCalculator: Ember['default'].observer('centerX', 'centerY', 'increment', 'maxIterations', 'escapePoint', 'startCalculation', function () {
+      if (this.get('startCalculation') == true && this.get('centerX') !== '' && this.get('centerY') !== '' && this.get('increment') !== '' && this.get('maxIterations') !== '' && this.get('escapePoint') !== '') {
+        this.set('startCalculation', false);
         this.mandelbrotSet();
       }
     }),
@@ -94,6 +97,9 @@ define('mandelbrot/components/mandelbrot-canvas', ['exports', 'ember', 'mandelbr
       return i;
     },
 
+    logBase: 1.0 / Math.log(2.0),
+    logHalfBase: Math.log(0.5) * 1.0 / Math.log(2.0),
+
     fastMandelbrotPixel: function fastMandelbrotPixel(Cr, Ci, maxIterations, escapePoint) {
       var Zr = 0;
       var Zi = 0;
@@ -101,14 +107,131 @@ define('mandelbrot/components/mandelbrot-canvas', ['exports', 'ember', 'mandelbr
       var Ti = 0;
       var n = undefined;
 
-      for (n = 1; n < maxIterations && Tr + Ti <= escapePoint; ++n) {
+      for (n = 0; n < maxIterations && Tr + Ti <= escapePoint; ++n) {
         Zi = 2 * Zr * Zi + Ci;
         Zr = Tr - Ti + Cr;
         Tr = Zr * Zr;
         Ti = Zi * Zi;
       }
 
-      return n;
+      if (n == maxIterations) {
+        return null;
+      }
+
+      /*
+       * Four more iterations to decrease error term;
+       * see http://linas.org/art-gallery/escape/escape.html
+       */
+      for (var e = 0; e < 4; ++e) {
+        Zi = 2 * Zr * Zi + Ci;
+        Zr = Tr - Ti + Cr;
+        Tr = Zr * Zr;
+        Ti = Zi * Zi;
+      }
+
+      return 5 + n - this.logHalfBase - Math.log(Math.log(Tr + Ti)) * this.logBase;
+    },
+
+    /* accepts parameters
+     * h  Object = {h:x, s:y, v:z}
+     * OR 
+     * h, s, v
+     */
+    hsv_to_rgb: function hsv_to_rgb(h, s, v) {
+      if (v > 1.0) v = 1.0;
+      var hp = h / 60.0;
+      var c = v * s;
+      var x = c * (1 - Math.abs(hp % 2 - 1));
+      var rgb = [0, 0, 0];
+
+      if (0 <= hp && hp < 1) rgb = [c, x, 0];
+      if (1 <= hp && hp < 2) rgb = [x, c, 0];
+      if (2 <= hp && hp < 3) rgb = [0, c, x];
+      if (3 <= hp && hp < 4) rgb = [0, x, c];
+      if (4 <= hp && hp < 5) rgb = [x, 0, c];
+      if (5 <= hp && hp < 6) rgb = [c, 0, x];
+
+      var m = v - c;
+      rgb[0] += m;
+      rgb[1] += m;
+      rgb[2] += m;
+
+      return {
+        r: Math.round(rgb[0] * 255),
+        g: Math.round(rgb[1] * 255),
+        b: Math.round(rgb[2] * 255)
+      };
+    },
+
+    HSVtoRGB: function HSVtoRGB(h, s, v) {
+      var r, g, b, i, f, p, q, t;
+      if (arguments.length === 1) {
+        s = h.s, v = h.v, h = h.h;
+      }
+      i = Math.floor(h * 6);
+      f = h * 6 - i;
+      p = v * (1 - s);
+      q = v * (1 - f * s);
+      t = v * (1 - (1 - f) * s);
+      switch (i % 6) {
+        case 0:
+          r = v, g = t, b = p;break;
+        case 1:
+          r = q, g = v, b = p;break;
+        case 2:
+          r = p, g = v, b = t;break;
+        case 3:
+          r = p, g = q, b = v;break;
+        case 4:
+          r = t, g = p, b = v;break;
+        case 5:
+          r = v, g = p, b = q;break;
+      }
+      return {
+        r: Math.round(r * 255),
+        g: Math.round(g * 255),
+        b: Math.round(b * 255)
+      };
+    },
+
+    mandelbrotSetLine: function mandelbrotSetLine(ctx, imageData, centerX, centerY, increment, maxIterations, escapePoint, iterateY, height, width) {
+      var _this = this;
+
+      var startX = centerX - width / 2 * increment;
+      var startY = centerY - height / 2 * increment;
+      var endX = centerX + width / 2 * increment;
+      var endY = centerY + height / 2 * increment;
+
+      for (var iterateX = 0; iterateX < width; ++iterateX) {
+        var x = startX + (endX - startX) * iterateX / (width - 1);
+        var y = startY + (endY - startY) * iterateY / (height - 1);
+
+        var iterations = this.fastMandelbrotPixel(x, y, maxIterations, escapePoint);
+        var r = 0;
+        var g = 0;
+        var b = 0;
+        var a = 255;
+
+        if (iterations != null) {
+          var color = this.hsv_to_rgb(360.0 * iterations / maxIterations, 1.0, 1.0);
+          r = color['r'];
+          g = color['g'];
+          b = color['b'];
+        }
+
+        this.setPixel(imageData, iterateX, iterateY, r, g, b, a);
+      }
+
+      ctx.putImageData(imageData, 0, 0); // at coords 0,0
+
+      if (iterateY < height) {
+        (function () {
+          var self = _this;
+          setTimeout(function () {
+            self.mandelbrotSetLine(ctx, imageData, centerX, centerY, increment, maxIterations, escapePoint, iterateY + 1, height, width);
+          }, 0);
+        })();
+      }
     },
 
     mandelbrotSet: function mandelbrotSet() {
@@ -121,72 +244,12 @@ define('mandelbrot/components/mandelbrot-canvas', ['exports', 'ember', 'mandelbr
       var increment = this.get('increment');
       var escapePoint = this.get('escapePoint');
 
-      var startX = centerX - width / 2 * increment;
-      var startY = centerY - height / 2 * increment;
-      var endX = centerX + width / 2 * increment;
-      var endY = centerY + height / 2 * increment;
-
-      var data = Array(width * height);
-
-      // Z = Z^2 + C
-
-      var leastValue = maxIterations;
-
-      for (var iterateY = 0; iterateY < height; ++iterateY) {
-        for (var iterateX = 0; iterateX < width; ++iterateX) {
-          var x = startX + (endX - startX) * iterateX / (width - 1);
-          var y = startY + (endY - startY) * iterateY / (height - 1);
-
-          var iterations = this.fastMandelbrotPixel(x, y, maxIterations, escapePoint);
-          data[iterateY * width + iterateX] = iterations;
-          if (iterations < leastValue) {
-            leastValue = iterations;
-          }
-        }
-      }
-
       var imageData = ctx.createImageData(width, height);
-      // scale the color values
 
-      for (var iterateY = 0; iterateY < height; ++iterateY) {
-        for (var iterateX = 0; iterateX < width; ++iterateX) {
-          var r = 0;
-          var g = 0;
-          var b = 0;
-          var a = 255;
-          var iterations = data[iterateY * width + iterateX];
-
-          if (iterations < maxIterations) {
-            var adjustedValue = iterations - leastValue + 2;
-            var color = 5 * math['default'].log(adjustedValue) / math['default'].log(maxIterations - leastValue + 2 - 1.0);
-            if (color < 1) {
-              r = 255 * color;
-              g = 0;
-              b = 0;
-            } else if (color < 2) {
-              r = 255;
-              g = 255 * (color - 1);
-              b = 0;
-            } else if (color < 3) {
-              r = 255;
-              g = 255;
-              b = 255 * (color - 2);
-            } else if (color < 4) {
-              r = 255;
-              g = 255 - 255 * (color - 3);
-              b = 255;
-            } else {
-              r = 255;
-              g = 255 * (color - 4);
-              b = 0;
-            }
-          }
-
-          this.setPixel(imageData, iterateX, iterateY, r, g, b, a);
-        }
-      }
-
-      ctx.putImageData(imageData, 0, 0); // at coords 0,0
+      var self = this;
+      setTimeout(function () {
+        self.mandelbrotSetLine(ctx, imageData, centerX, centerY, increment, maxIterations, escapePoint, 0, height, width);
+      }, 0);
     },
 
     setCanvas: Ember['default'].on('didInsertElement', function () {
@@ -206,6 +269,7 @@ define('mandelbrot/components/mandelbrot-canvas', ['exports', 'ember', 'mandelbr
         centerY: centerY + (event.offsetY - height / 2) * increment,
         increment: increment * 0.25
       });
+      this.set('startCalculation', true);
       return false;
     },
 
@@ -220,6 +284,7 @@ define('mandelbrot/components/mandelbrot-canvas', ['exports', 'ember', 'mandelbr
         centerY: centerY + (event.offsetY - height / 2) * increment,
         increment: increment / 0.25
       });
+      this.set('startCalculation', true);
       return false;
     }
   });
@@ -254,16 +319,18 @@ define('mandelbrot/components/mandelbrot-set', ['exports', 'ember'], function (e
     increment: null,
     maxIterations: null,
     escapePoint: null,
+    startCalculation: false,
 
     setCanvas: Ember['default'].on('didInsertElement', function () {
       Ember['default'].run.scheduleOnce('afterRender', this, function () {
-        this.send('calculate', -0.5, 0.0, 0.0046875, 1000, 2.0);
+        this.send('calculate', -0.5, 0.0, 0.0046875, 180, 30.1);
       });
     }),
 
     actions: {
       calculate: function calculate(centerX, centerY, increment, maxIterations, escapePoint) {
         this.setProperties({ centerX: centerX, centerY: centerY, increment: increment, maxIterations: maxIterations, escapePoint: escapePoint });
+        this.set('startCalculation', true);
       }
     }
   });
@@ -364,7 +431,7 @@ define('mandelbrot/templates/application', ['exports'], function (exports) {
             "column": 0
           },
           "end": {
-            "line": 4,
+            "line": 3,
             "column": 0
           }
         },
@@ -375,13 +442,6 @@ define('mandelbrot/templates/application', ['exports'], function (exports) {
       hasRendered: false,
       buildFragment: function buildFragment(dom) {
         var el0 = dom.createDocumentFragment();
-        var el1 = dom.createElement("h2");
-        dom.setAttribute(el1,"id","title");
-        var el2 = dom.createTextNode("Mandelbrot");
-        dom.appendChild(el1, el2);
-        dom.appendChild(el0, el1);
-        var el1 = dom.createTextNode("\n");
-        dom.appendChild(el0, el1);
         var el1 = dom.createComment("");
         dom.appendChild(el0, el1);
         var el1 = dom.createTextNode("\n");
@@ -394,13 +454,14 @@ define('mandelbrot/templates/application', ['exports'], function (exports) {
       },
       buildRenderNodes: function buildRenderNodes(dom, fragment, contextualElement) {
         var morphs = new Array(2);
-        morphs[0] = dom.createMorphAt(fragment,2,2,contextualElement);
-        morphs[1] = dom.createMorphAt(fragment,4,4,contextualElement);
+        morphs[0] = dom.createMorphAt(fragment,0,0,contextualElement);
+        morphs[1] = dom.createMorphAt(fragment,2,2,contextualElement);
+        dom.insertBoundary(fragment, 0);
         return morphs;
       },
       statements: [
-        ["content","mandelbrot-set",["loc",[null,[2,0],[2,18]]]],
-        ["content","outlet",["loc",[null,[3,0],[3,10]]]]
+        ["content","mandelbrot-set",["loc",[null,[1,0],[1,18]]]],
+        ["content","outlet",["loc",[null,[2,0],[2,10]]]]
       ],
       locals: [],
       templates: []
@@ -671,7 +732,7 @@ define('mandelbrot/templates/components/mandelbrot-set', ['exports'], function (
       },
       statements: [
         ["content","yield",["loc",[null,[1,0],[1,9]]]],
-        ["inline","mandelbrot-canvas",[],["centerX",["subexpr","@mut",[["get","centerX",["loc",[null,[3,28],[3,35]]]]],[],[]],"centerY",["subexpr","@mut",[["get","centerY",["loc",[null,[3,44],[3,51]]]]],[],[]],"increment",["subexpr","@mut",[["get","increment",["loc",[null,[3,62],[3,71]]]]],[],[]],"maxIterations",["subexpr","@mut",[["get","maxIterations",["loc",[null,[3,86],[3,99]]]]],[],[]],"escapePoint",["subexpr","@mut",[["get","escapePoint",["loc",[null,[3,112],[3,123]]]]],[],[]]],["loc",[null,[3,0],[3,125]]]],
+        ["inline","mandelbrot-canvas",[],["centerX",["subexpr","@mut",[["get","centerX",["loc",[null,[3,28],[3,35]]]]],[],[]],"centerY",["subexpr","@mut",[["get","centerY",["loc",[null,[3,44],[3,51]]]]],[],[]],"increment",["subexpr","@mut",[["get","increment",["loc",[null,[3,62],[3,71]]]]],[],[]],"maxIterations",["subexpr","@mut",[["get","maxIterations",["loc",[null,[3,86],[3,99]]]]],[],[]],"escapePoint",["subexpr","@mut",[["get","escapePoint",["loc",[null,[3,112],[3,123]]]]],[],[]],"startCalculation",["subexpr","@mut",[["get","startCalculation",["loc",[null,[3,141],[3,157]]]]],[],[]]],["loc",[null,[3,0],[3,159]]]],
         ["inline","mandelbrot-interface",[],["centerX",["subexpr","@mut",[["get","centerX",["loc",[null,[4,31],[4,38]]]]],[],[]],"centerY",["subexpr","@mut",[["get","centerY",["loc",[null,[4,47],[4,54]]]]],[],[]],"increment",["subexpr","@mut",[["get","increment",["loc",[null,[4,65],[4,74]]]]],[],[]],"maxIterations",["subexpr","@mut",[["get","maxIterations",["loc",[null,[4,89],[4,102]]]]],[],[]],"escapePoint",["subexpr","@mut",[["get","escapePoint",["loc",[null,[4,115],[4,126]]]]],[],[]]],["loc",[null,[4,0],[4,128]]]]
       ],
       locals: [],
@@ -706,7 +767,7 @@ define('mandelbrot/tests/components/mandelbrot-canvas.jshint', function () {
 
   module('JSHint - components');
   test('components/mandelbrot-canvas.js should pass jshint', function() { 
-    ok(false, 'components/mandelbrot-canvas.js should pass jshint.\ncomponents/mandelbrot-canvas.js: line 72, col 18, Missing \'new\' prefix when invoking a constructor.\n\n1 error'); 
+    ok(false, 'components/mandelbrot-canvas.js should pass jshint.\ncomponents/mandelbrot-canvas.js: line 15, col 40, Expected \'===\' and instead saw \'==\'.\ncomponents/mandelbrot-canvas.js: line 61, col 13, Expected \'===\' and instead saw \'==\'.\ncomponents/mandelbrot-canvas.js: line 85, col 20, Expected \'{\' and instead saw \'v\'.\ncomponents/mandelbrot-canvas.js: line 91, col 26, Expected \'{\' and instead saw \'rgb\'.\ncomponents/mandelbrot-canvas.js: line 92, col 26, Expected \'{\' and instead saw \'rgb\'.\ncomponents/mandelbrot-canvas.js: line 93, col 26, Expected \'{\' and instead saw \'rgb\'.\ncomponents/mandelbrot-canvas.js: line 94, col 26, Expected \'{\' and instead saw \'rgb\'.\ncomponents/mandelbrot-canvas.js: line 95, col 26, Expected \'{\' and instead saw \'rgb\'.\ncomponents/mandelbrot-canvas.js: line 96, col 26, Expected \'{\' and instead saw \'rgb\'.\ncomponents/mandelbrot-canvas.js: line 113, col 33, Expected an assignment or function call and instead saw an expression.\ncomponents/mandelbrot-canvas.js: line 121, col 35, Expected an assignment or function call and instead saw an expression.\ncomponents/mandelbrot-canvas.js: line 122, col 35, Expected an assignment or function call and instead saw an expression.\ncomponents/mandelbrot-canvas.js: line 123, col 35, Expected an assignment or function call and instead saw an expression.\ncomponents/mandelbrot-canvas.js: line 124, col 35, Expected an assignment or function call and instead saw an expression.\ncomponents/mandelbrot-canvas.js: line 125, col 35, Expected an assignment or function call and instead saw an expression.\ncomponents/mandelbrot-canvas.js: line 126, col 35, Expected an assignment or function call and instead saw an expression.\ncomponents/mandelbrot-canvas.js: line 166, col 127, Missing semicolon.\ncomponents/mandelbrot-canvas.js: line 185, col 120, Missing semicolon.\n\n18 errors'); 
   });
 
 });
@@ -1414,7 +1475,7 @@ catch(err) {
 if (runningTests) {
   require("mandelbrot/tests/test-helper");
 } else {
-  require("mandelbrot/app")["default"].create({"name":"mandelbrot","version":"0.0.0+"});
+  require("mandelbrot/app")["default"].create({"name":"mandelbrot","version":"0.0.0+67437f5e"});
 }
 
 /* jshint ignore:end */
